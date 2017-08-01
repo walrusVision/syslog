@@ -31,7 +31,9 @@
          get_utc_offset/2,
          truncate/2,
          format_rfc3164_date/1,
-         format_rfc5424_date/1]).
+         format_rfc5424_date/1,
+         to_binary/1
+]).
 
 -define(GET_ENV(Property), application:get_env(syslog, Property)).
 
@@ -196,6 +198,20 @@ format_rfc3164_date({UtcDatetime, _MicroSecs}) ->
     format_rfc3164_date_(erlang:universaltime_to_localtime(UtcDatetime)).
 format_rfc3164_date_({{_, Mo, D}, {H, Mi, S}}) ->
     [month(Mo), " ", day(D), " ", digit(H), $:, digit(Mi), $:, digit(S)].
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Convert a viable format type into a binary type. Used for converting
+%% terms which have been supplied by the user
+%% @end
+%%------------------------------------------------------------------------------
+-spec to_binary(atom() | binary() | iolist()) -> binary().
+to_binary(Item) when is_binary(Item) ->
+  Item;
+to_binary(Item) when is_list(Item) ->
+  list_to_binary(Item);
+to_binary(Item) when is_atom(Item) ->
+  atom_to_binary(Item, utf8).
 
 %%%=============================================================================
 %%% internal functions

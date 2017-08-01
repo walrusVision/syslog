@@ -67,11 +67,12 @@ set_log_level(Level) ->
 %%%=============================================================================
 
 -record(state, {
-    log_level     :: integer() | {mask, integer()},
-    formatter     :: atom(),
-    format_cfg    :: list(),
-    sd_id         :: string() | undefined,
-    metadata_keys :: [atom()]}).
+    log_level       :: integer() | {mask, integer()},
+    formatter       :: atom(),
+    format_cfg      :: list(),
+    sd_id           :: string() | undefined,
+    metadata_keys   :: [atom()],
+    use_msg_appname :: boolean()}).
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -82,14 +83,17 @@ init([Level]) ->
     init([Level, {}, {lager_default_formatter, ?CFG}]);
 init([Level, {}, {Formatter, FormatterConfig}]) when is_atom(Formatter) ->
     init([Level, {undefined, []}, {Formatter, FormatterConfig}]);
-init([Level, {SDataId, MDKeys}, {Formatter, FormatterConfig}])
+init([Level, {SDataId, MDKeys}, {Formatter, FormatterConfig}]) when is_atom(Formatter) ->
+    init([Level, {SDataId, MDKeys}, {Formatter, FormatterConfig}, false]);
+init([Level, {SDataId, MDKeys}, {Formatter, FormatterConfig}, UseMsgAppName])
   when is_atom(Formatter) ->
     {ok, #state{
             log_level = level_to_mask(Level),
             sd_id = SDataId,
             metadata_keys = MDKeys,
             formatter = Formatter,
-            format_cfg = FormatterConfig}}.
+            format_cfg = FormatterConfig,
+            use_msg_appname = UseMsgAppName}}.
 
 %%------------------------------------------------------------------------------
 %% @private
@@ -99,7 +103,7 @@ handle_event({log, Level, _, [_, Location, Message]}, State)
     Severity = get_severity(Level),
     Pid = get_pid(Location),
     Timestamp = os:timestamp(),
-    syslog_logger:log(Severity, Pid, Timestamp, [], Message, no_format),
+    syslog_logger:log(Severity, Pid, Timestamp, [], Message, no_format, []),
     {ok, State};
 handle_event({log, Msg}, State = #state{log_level = Level}) ->
     case apply(lager_util, is_loggable, [Msg, Level, ?MODULE]) of
@@ -109,7 +113,9 @@ handle_event({log, Msg}, State = #state{log_level = Level}) ->
             Timestamp = apply(lager_msg, timestamp, [Msg]),
             Message = format_msg(Msg, State),
             SD = metadata_to_sd(Msg, State),
-            syslog_logger:log(Severity, Pid, Timestamp, SD, Message, no_format);
+            Overrides = get_appname_override(Msg, State),
+            syslog_logger:log(Severity, Pid, Timestamp, SD, Message, no_format,
+                Overrides);
         false ->
             ok
     end,
@@ -206,6 +212,22 @@ metadata_to_sd(Msg, #state{sd_id = SDataId, metadata_keys = MDKeys}) ->
             end
     catch
         _:_ -> []
+    end.
+
+%%------------------------------------------------------------------------------
+%% @private
+%%------------------------------------------------------------------------------
+get_appname_override(_, #state{use_msg_appname = false}) ->
+  [];
+get_appname_override(Msg, #state{use_msg_appname = true}) ->
+    try apply(lager_msg, metadata, [Msg]) of
+        Metadata ->
+            case proplists:get_value(application, Metadata) of
+                undefined -> [];
+                Result -> [{appname, Result}]
+            end
+    catch
+      _:_ -> []
     end.
 
 %%------------------------------------------------------------------------------
