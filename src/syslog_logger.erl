@@ -38,7 +38,9 @@
 %% API
 -export([start_link/0,
          log/6,
+         log/7,
          async_log/6,
+         async_log/7,
          set_log_level/1,
          set_log_mode/1]).
 
@@ -119,6 +121,23 @@ log(Severity, Pid, Timestamp, SD, Fmt, Args) ->
 
 %%------------------------------------------------------------------------------
 %% @doc
+%% Forwards a message. This function never fails. Allows overriding of
+%% config options.
+%% @end
+%%------------------------------------------------------------------------------
+-spec log(syslog:severity(),
+          syslog:proc_name(),
+          erlang:timestamp(),
+          [syslog:sd_element()],
+          io:format() | iolist(),
+          [term()] | no_format,
+          proplists:proplist()) -> ok.
+log(Severity, Pid, Timestamp, SD, Fmt, Args, Overrides) ->
+    Opts = apply_cfg_overrides(get_opts(), Overrides),
+    maybe_log(Severity, Pid, Timestamp, SD, Fmt, Args, Opts).
+
+%%------------------------------------------------------------------------------
+%% @doc
 %% Forwards a message asynchronously. This function never fails.
 %% @end
 %%------------------------------------------------------------------------------
@@ -131,6 +150,24 @@ log(Severity, Pid, Timestamp, SD, Fmt, Args) ->
 async_log(Severity, Pid, Timestamp, SD, Fmt, Args) ->
     AsyncOpts = (get_opts())#opts{function = get_function(true)},
     maybe_log(Severity, Pid, Timestamp, SD, Fmt, Args, AsyncOpts).
+
+%%------------------------------------------------------------------------------
+%% @doc
+%% Forwards a message asynchronously. This function never fails. Allows
+%% overriding of config options.
+%% @end
+%%------------------------------------------------------------------------------
+-spec async_log(syslog:severity(),
+                syslog:proc_name(),
+                erlang:timestamp(),
+                [syslog:sd_element()],
+                io:format() | iolist(),
+                [term()] | no_format,
+                proplists:proplist()) -> ok.
+async_log(Severity, Pid, Timestamp, SD, Fmt, Args, Overrides) ->
+    AsyncOpts = (get_opts())#opts{function = get_function(true)},
+    NewAsyncOpts = apply_cfg_overrides(AsyncOpts, Overrides),
+    maybe_log(Severity, Pid, Timestamp, SD, Fmt, Args, NewAsyncOpts).
 
 %%------------------------------------------------------------------------------
 %% @doc
@@ -513,5 +550,30 @@ get_function(false) -> {call, syslog_lib:get_property(timeout, ?TIMEOUT)}.
 %% @private
 %%------------------------------------------------------------------------------
 get_bom()           -> get_bom(syslog_lib:get_property(use_rfc5424_bom, false)).
-get_bom({ok, true}) -> unicode:encoding_to_bom(utf8);
+get_bom({ok, true}) -> get_bom(true);
+get_bom(true)       -> unicode:encoding_to_bom(utf8);
 get_bom(_)          -> <<>>.
+
+%%------------------------------------------------------------------------------
+%% @private
+%% Applying user provided overrides to the outgoing messages. This allows the
+%% user to change the default values for any of the syslog cfg values per
+%% message.
+%%
+%% Since these values are provided by the user they have to checked to sure
+%% they are in the correct format before sending.
+%%------------------------------------------------------------------------------
+apply_cfg_overrides(Opts, []) ->
+    Opts;
+apply_cfg_overrides(Opts, [{appname, AppName}|T]) ->
+    AppName1 = syslog_lib:to_binary(AppName),
+    apply_cfg_overrides(Opts#opts{cfg = (Opts#opts.cfg)#syslog_cfg{appname=AppName1}}, T);
+apply_cfg_overrides(Opts, [{domain, Domain}|T]) ->
+    apply_cfg_overrides(Opts#opts{cfg = (Opts#opts.cfg)#syslog_cfg{domain=Domain}}, T);
+apply_cfg_overrides(Opts, [{hostname, HostName}|T]) ->
+    apply_cfg_overrides(Opts#opts{cfg = (Opts#opts.cfg)#syslog_cfg{hostname=HostName}}, T);
+apply_cfg_overrides(Opts, [{bom, Bom}|T]) when is_boolean(Bom) ->
+    apply_cfg_overrides(Opts#opts{cfg = (Opts#opts.cfg)#syslog_cfg{bom=get_bom(Bom)}}, T);
+apply_cfg_overrides(Opts, [{beam_pid, BeamPid}|T]) ->
+    BeamPid1 = syslog_lib:to_binary(BeamPid),
+    apply_cfg_overrides(Opts#opts{cfg = (Opts#opts.cfg)#syslog_cfg{beam_pid=BeamPid1 }}, T).
